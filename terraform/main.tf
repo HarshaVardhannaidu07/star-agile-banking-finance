@@ -6,7 +6,7 @@ resource "tls_private_key" "mykey" {
 resource "local_file" "pem_file" {
  content         = tls_private_key.mykey.private_key_pem
  filename        = "Project1Key.pem"
- file_permission = "0400"
+ file_permission = "400"
 }
 
 resource "aws_key_pair" "aws_key" {

@@ -1,8 +1,8 @@
 [test]
-<test-ip>
+<test-ip-from-terraform-output>
 
 [prod]
-<prod-ip>
+<prod-ip-from-terraform-output>
 
 [all:vars]
 ansible_user=ubuntu

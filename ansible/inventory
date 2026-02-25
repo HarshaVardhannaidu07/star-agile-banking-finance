@@ -3,3 +3,8 @@
 
 [prod]
 <prod-ip>
+
+[all:vars]
+ansible_user=ubuntu
+ansible_ssh_private_key_file=~/.ssh/Project1Key.pem
+ansible_ssh_common_args='-o StrictHostKeyChecking=no'

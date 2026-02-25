@@ -1,0 +1,8 @@
+- hosts: prod
+  become: yes
+  tasks:
+    - name: Pull docker image
+      command: docker pull cloudthree372/bankapp:{{ tag }}
+
+    - name: Run container
+      command: docker run -d -p 8088:8088 cloudthree372/bankapp:{{ tag }}

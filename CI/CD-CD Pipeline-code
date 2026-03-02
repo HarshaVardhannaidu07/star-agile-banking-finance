@@ -1,0 +1,143 @@
+pipeline {
+agent { label 'built-in' }
+
+ environment {
+  IMAGE_NAME = "cloudthree372/bankapp"
+  TAG = "${BUILD_NUMBER}"
+ }
+
+ tools{
+  maven 'Maven'
+ }
+
+ stages {
+
+  stage('Checkout') {
+   steps {
+    git 'https://github.com/HarshaVardhannaidu07/star-agile-banking-finance'
+   }
+  }
+
+  stage('Build & Test') {
+   steps {
+    sh 'mvn clean package'
+   }
+  }
+
+  stage('Docker Build') {
+   steps {
+    sh 'docker build -t $IMAGE_NAME:$TAG .'
+   }
+  }
+
+  stage('Docker Push') {
+   steps {
+    withCredentials([usernamePassword(
+      credentialsId: 'docker-creds',
+      usernameVariable: 'USER',
+      passwordVariable: 'PASS'
+    )]) {
+     sh 'echo $PASS | docker login -u $USER --password-stdin'
+     sh 'docker push $IMAGE_NAME:$TAG'
+    }
+   }
+  }
+
+  stage('Terraform Provision') {
+   steps {
+    withCredentials([[
+      $class: 'AmazonWebServicesCredentialsBinding',
+      credentialsId: 'aws-creds'
+    ]]) {
+     sh '''
+      cd terraform
+      terraform init
+      terraform destroy -auto-approve
+      terraform apply -auto-approve
+     '''
+    }
+   }
+  }
+     stage('Fix PEM Permission') {
+     steps {
+      sh 'chmod 400 terraform/Project1Key.pem'
+     }
+    }
+  stage('Generate Inventory') {
+   steps {
+    sh '''
+     cd terraform
+     TEST_IP=$(terraform output -raw test_ip)
+     PROD_IP=$(terraform output -raw prod_ip)
+
+     echo "[test]" > ../ansible/inventory
+     echo "$TEST_IP ansible_user=ubuntu ansible_ssh_private_key_file=terraform/Project1Key.pem" >> ../ansible/inventory
+
+     echo "[prod]" >> ../ansible/inventory
+     echo "$PROD_IP ansible_user=ubuntu ansible_ssh_private_key_file=terraform/Project1Key.pem" >> ../ansible/inventory
+    '''
+   }
+  }
+  stage('Ansible Setup Servers') {
+   steps {
+    sh '''
+    export ANSIBLE_HOST_KEY_CHECKING=False
+    ansible-playbook -i ansible/inventory ansible/setup.yml
+    '''
+   }
+  }
+  stage('Deploy Test') {
+   steps {
+    sh 'ansible-playbook -i ansible/inventory ansible/deploy-test.yml --extra-vars "tag=$TAG"'
+   }
+  }
+  stage('Get Test URL') {
+   steps {
+    sh '''
+     TEST_IP=$(awk '/\\[test\\]/{getline; print $1}' ansible/inventory)
+     echo "http://$TEST_IP:8088" > test_url.txt 
+    '''
+   }
+  }
+  stage('Application Health Check') {
+    steps {
+        sh '''#!/bin/bash
+            # Use -trim to remove any accidental whitespace/line endings
+            TEST_IP=$(cat test_url.txt | tr -d '\\r' | xargs)
+
+            echo "Checking application at: $TEST_IP"
+
+            for i in {1..10}; do
+                # Added --connect-timeout to avoid hanging
+                STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "$TEST_IP")
+                
+                if [ "$STATUS" -eq 200 ]; then
+                    echo "SUCCESS: Application is UP (HTTP 200)"
+                    exit 0
+                fi
+                
+                echo "Attempt $i/10: Received HTTP $STATUS. Retrying in 10s..."
+                sleep 10
+            done
+
+            echo "ERROR: Application failed to start after 100 seconds"
+            exit 1
+        '''
+       }
+    }
+
+
+  stage('Deploy Prod') {
+   when {
+    expression { currentBuild.currentResult == "SUCCESS" }
+   }
+   steps {
+    sh '''
+    export ANSIBLE_HOST_KEY_CHECKING=False
+    ansible-playbook -i ansible/inventory ansible/deploy-prod.yml --extra-vars "tag=$TAG"
+    '''
+   }
+  }
+
+ }
+}
